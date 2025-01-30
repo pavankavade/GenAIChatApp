@@ -95,7 +95,7 @@
                         <label class="block text-sm font-medium mb-1">AI Model</label>
                         <select id="modelSelect" class="settings-input w-full p-2 border rounded">
                             <option value="gpt-3.5">GPT-3.5</option>
-                            <option value="gpt-4">GPT-4</option>
+                            <option value="deepseek">DeepSeek</option>
                         </select>
                     </div>
                     <div>
@@ -107,6 +107,10 @@
                         <label class="block text-sm font-medium mb-1">Context History</label>
                         <input type="number" id="contextLength" 
                             class="settings-input w-full p-2 border rounded" value="5"/>
+                    </div>
+                    <div>
+                       <label class="block text-sm font-medium mb-1">Use Dummy Response</label>
+                        <input type="checkbox" id="useDummyResponse" class="settings-input w-full p-2 border rounded" />
                     </div>
                 </div>
             </div>
@@ -167,6 +171,7 @@ $(document).ready(function() {
             $('#modelSelect').val(store.settings.model || 'gpt-3.5');
             $('#outputLength').val(store.settings.outputLength || 256);
             $('#contextLength').val(store.settings.contextLength || 5);
+             $('#useDummyResponse').prop('checked', store.settings.useDummyResponse || false);
         }
     }
 
@@ -192,7 +197,7 @@ $(document).ready(function() {
             const chatId = Number($(this).closest('[data-chat-id]').data('chat-id'));
             deleteChat(chatId);
         })
-        .on('change', '#modelSelect, #outputLength, #contextLength', function() {
+        .on('change', '#modelSelect, #outputLength, #contextLength, #useDummyResponse', function() {
             saveSettings();
         });
 
@@ -266,7 +271,7 @@ $(document).ready(function() {
     }
 
     // Message Handling
-        async function sendMessage(message) {
+       async function sendMessage(message) {
         if (!currentChatId) {
             createNewChat();
         }
@@ -294,42 +299,106 @@ $(document).ready(function() {
         const context = chat.messages
             .slice(-$('#contextLength').val())
             .map(m => ({role: m.role, content: m.content}));
+            
+            const useDummy = $('#useDummyResponse').is(':checked');
+        // Call the appropriate API based on selection
+        if (useDummy) {
+                const response = await fakeStreamingAPI({
+                messages: context,
+                model: $('#modelSelect').val(),
+                max_length: $('#outputLength').val()
+            });
+            for await (const chunk of response) {
+                aiResponse.content += chunk;
+                updateLastMessage(aiResponse.content);
+            }
+        }else{
+                try {
+                    const response = await deepSeekAPI({
+                        messages: context,
+                        model: $('#modelSelect').val(),
+                        max_tokens: $('#outputLength').val()
+                    });
 
-        // Simulate API call with streaming response
-        const response = await fakeStreamingAPI({
-            messages: context,
-            model: $('#modelSelect').val(),
-            max_length: $('#outputLength').val()
-        });
+                    for await (const chunk of response) {
+                        aiResponse.content += chunk;
+                        updateLastMessage(aiResponse.content);
+                    }
 
-
-        for await (const chunk of response) {
-            aiResponse.content += chunk;
-            updateLastMessage(aiResponse.content);
+                    } catch (error) {
+                        console.error("Error from DeepSeek API:", error);
+                        aiResponse.content = "Error in processing message";
+                        updateLastMessage(aiResponse.content);
+                    }
+                }
+            saveChats();
         }
-        saveChats();
-    }
+        async function* deepSeekAPI(params) {
+            const API_ENDPOINT = "http://localhost:3000/api/chat/completions"; // Proxy endpoint
+           
 
-    async function* fakeStreamingAPI(params) {
-    const responseText = `
-        # This is a Header
-        This is a paragraph with **bold** and *italic* text.
-        
-        - List item 1
-        - List item 2
-        
-        > A block quote
-        
-        \`\`\`javascript
-        console.log('Hello, Markdown!');
-        \`\`\`
-    `;
-    const lines = responseText.split('\n');
-    for (const line of lines) {
-        yield line + '\n'; // Preserve line breaks
-        await new Promise(resolve => setTimeout(resolve, 100));
-    }
-}
+            const headers = {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            };
+            const payload = {
+                "messages": params.messages,
+                "temperature": 0.7,
+                "max_tokens": params.max_tokens,
+                "stream": true,
+            };
+
+            try{
+            console.log("Sending API request to proxy server:", API_ENDPOINT);
+                const response = await fetch( API_ENDPOINT, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(payload),
+                });
+            console.log("Response status:", response.status);
+            console.log("Response headers:", response.headers);
+                if(!response.ok){
+                    const errorText = await response.text();
+                    console.error(`HTTP error! status: ${response.status}, error: ${errorText}`);
+                    throw new Error(`HTTP error! status: ${response.status}, error: ${errorText}`);
+
+                    }
+                const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let accumulatedResponse = "";
+                    while(true){
+                        const { done, value} = await reader.read();
+                        if(done){
+                            break;
+                        }
+
+                        const decodedChunk = decoder.decode(value);
+                        console.log("Received stream chunk:", decodedChunk);
+                        const lines = decodedChunk.split('\n').filter(line => line.trim().startsWith('data:'));
+                        for(const line of lines) {
+                        const json_str = line.substring(5).trim();
+                            console.log("Processing data line", json_str);
+                            if(json_str === '[DONE]'){
+                            return;
+                            }
+                            try {
+                                const data = JSON.parse(json_str);
+                                if (data.choices && data.choices.length > 0) {
+                                    const chunk = data.choices[0].delta.content || '';
+                                    accumulatedResponse += chunk;
+                                    yield chunk;
+                                }
+                            } catch (e){
+                            console.error('Error parsing json', e);
+                            }
+                        }
+                    }
+
+            } catch(error){
+                console.error('Error from DeepSeek API:', error);
+                throw error;
+            }
+        }
     // UI Updates
         function appendMessage(message, skipMarkDown=false) {
             const alignment = message.role === 'user' ? 'justify-end' : 'justify-start';
@@ -371,11 +440,12 @@ $(document).ready(function() {
     }
 
     // Settings Management
-    function saveSettings() {
+     function saveSettings() {
         store.settings = {
             model: $('#modelSelect').val(),
             outputLength: $('#outputLength').val(),
-            contextLength: $('#contextLength').val()
+            contextLength: $('#contextLength').val(),
+            useDummyResponse: $('#useDummyResponse').is(':checked')
         };
         localStorage.setItem('appSettings', JSON.stringify(store.settings));
     }
