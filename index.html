@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Interface</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/2.3.3/purify.min.js"></script>
+    <style>
+        #chatMessages h1, #chatMessages h2, #chatMessages h3 {
+    font-weight: bold;
+    margin: 1em 0;
+}
+    #chatMessages h1 { font-size: 2em; }
+    #chatMessages h2 { font-size: 1.5em; }
+    #chatMessages h3 { font-size: 1.17em; }
+    #chatMessages strong { font-weight: bold; }
+    #chatMessages em { font-style: italic; }
+    #chatMessages ul { list-style-type: disc; padding-left: 20px; }
+    #chatMessages ol { list-style-type: decimal; padding-left: 20px; }
+    #chatMessages blockquote {
+        border-left: 4px solid #ddd;
+        padding-left: 1em;
+        color: #666;
+        margin: 1em 0;
+    }
+    #chatMessages pre {
+        background: #f4f4f4;
+        padding: 1em;
+        overflow-x: auto;
+        border-radius: 4px;
+    }
+    #chatMessages code {
+        font-family: monospace;
+        background: #f4f4f4;
+        padding: 2px 4px;
+        border-radius: 4px;
+    }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="flex h-screen">
+        <!-- Left Sidebar -->
+        <div class="w-64 bg-white shadow-lg transition-all duration-300" id="leftSidebar">
+            <div class="p-4 border-b">
+                <button class="w-full bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600" id="newChat">
+                    New Chat
+                </button>
+            </div>
+            <div class="overflow-y-auto h-[calc(100vh-4rem)]" id="chatHistory">
+                <!-- Chat history items will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Main Chat Area -->
+        <div class="flex-1 flex flex-col">
+            <!-- Top Bar -->
+            <div class="p-4 bg-white border-b flex items-center justify-between">
+                <button class="p-2 hover:bg-gray-100 rounded" id="toggleLeft">
+                    ☰
+                </button>
+                <div class="text-xl font-bold">AI Chat</div>
+                <button class="p-2 hover:bg-gray-100 rounded" id="toggleRight">
+                    ⚙️
+                </button>
+            </div>
+
+            <!-- Chat Messages -->
+            <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chatMessages">
+                <!-- Messages will be loaded here -->
+            </div>
+
+            <!-- Input Area -->
+            <div class="p-4 bg-white border-t">
+                <div class="flex gap-2">
+                    <input type="text" id="messageInput" 
+                           class="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="Type your message...">
+                    <button id="sendButton" 
+                            class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600">
+                        Send
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Sidebar -->
+        <div class="w-64 bg-white shadow-lg transition-all duration-300" id="rightSidebar">
+            <div class="p-4 border-b font-bold">Settings</div>
+            <div class="p-4 space-y-4">
+                <div class="p-4 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">AI Model</label>
+                        <select id="modelSelect" class="settings-input w-full p-2 border rounded">
+                            <option value="gpt-3.5">GPT-3.5</option>
+                            <option value="gpt-4">GPT-4</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Output Length</label>
+                        <input type="number" id="outputLength" 
+                            class="settings-input w-full p-2 border rounded" value="256"/>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Context History</label>
+                        <input type="number" id="contextLength" 
+                            class="settings-input w-full p-2 border rounded" value="5"/>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+$(document).ready(function() {
+    // Local Storage Management
+    let currentChatId = null;
+    // Local Storage Management
+    // Update the store initialization
+    const store = {
+        chats: JSON.parse(localStorage.getItem('chatSessions') || '[]'),
+        settings: JSON.parse(localStorage.getItem('appSettings') || '{}')
+    };
+
+    // Ensure chats array exists
+    if (!Array.isArray(store.chats)) store.chats = [];
+
+    // Missing Method Implementations
+    function loadChatHistory() {
+        $('#chatHistory').empty();
+        store.chats.forEach(chat => {
+            const isActive = chat.id === currentChatId;
+            const chatItem = `
+                <div class="group flex items-center justify-between p-2 hover:bg-gray-100 cursor-pointer ${isActive ? 'bg-blue-50' : ''}" 
+                    data-chat-id="${chat.id}">
+                    <div class="truncate">${chat.title}</div>
+                    <button class="delete-chat ml-2 text-red-500 opacity-0 group-hover:opacity-100">
+                        ×
+                    </button>
+                </div>
+            `;
+            $('#chatHistory').append(chatItem);
+        });
+        
+        // Add click handler for chat items
+        $('#chatHistory').off('click', '[data-chat-id]').on('click', '[data-chat-id]', function() {
+            const chatId = Number($(this).data('chat-id'));
+            loadChat(chatId);
+        });
+
+        // Add delete handler
+        $('.delete-chat').off('click').on('click', function(e) {
+            e.stopPropagation();
+            const chatId = Number($(this).parent().data('chat-id'));
+            deleteChat(chatId);
+        });
+    }
+
+    function saveChats() {
+        localStorage.setItem('chatSessions', JSON.stringify(store.chats));
+    }
+
+    function loadSettings() {
+        if (store.settings) {
+            $('#modelSelect').val(store.settings.model || 'gpt-3.5');
+            $('#outputLength').val(store.settings.outputLength || 256);
+            $('#contextLength').val(store.settings.contextLength || 5);
+        }
+    }
+
+    function updateChatHistoryList() {
+        // Update active state styling
+        $('[data-chat-id]').removeClass('bg-blue-50');
+        $(`[data-chat-id="${currentChatId}"]`).addClass('bg-blue-50');
+        
+        // Update chat titles with first message if empty
+        store.chats.forEach(chat => {
+            if (!chat.title && chat.messages.length > 0) {
+                chat.title = chat.messages[0].content.substring(0, 20) + '...';
+            }
+        });
+        saveChats();
+        loadChatHistory();
+    }
+
+    // Enhanced Event Handling
+    $(document)
+        .on('click', '.delete-chat', function(e) {
+            e.stopPropagation();
+            const chatId = Number($(this).closest('[data-chat-id]').data('chat-id'));
+            deleteChat(chatId);
+        })
+        .on('change', '#modelSelect, #outputLength, #contextLength', function() {
+            saveSettings();
+        });
+
+    // Initialize app
+    function init() {
+        loadSettings();
+        
+        // Initialize chats if empty
+        if (store.chats.length === 0) {
+            createNewChat();
+        } else {
+            // Load first chat by default
+            loadChat(store.chats[0].id);
+        }
+        
+        loadChatHistory();
+    }
+
+    // Chat Management
+    function createNewChat() {
+        const chat = {
+            id: Date.now(),
+            title: `Chat ${store.chats.length + 1}`,
+            messages: [],
+            timestamp: new Date().toISOString()
+        };
+        
+        store.chats.push(chat);
+        saveChats();
+        loadChat(chat.id);
+        updateChatHistoryList();
+    }
+
+   function loadChat(chatId) {
+        // Find or create chat
+        let chat = store.chats.find(c => c.id === chatId);
+
+        // If chat not found, create new one
+        if (!chat) {
+            if (store.chats.length > 0) {
+                chat = store.chats[0];
+            } else {
+                createNewChat();
+                return;
+            }
+        }
+
+        currentChatId = chat.id;
+
+        // Clear messages and re-render
+        $('#chatMessages').empty();
+        if (chat.messages) { // Add null check
+            chat.messages.forEach(msg => appendMessage(msg, true)); // added `true`
+        }
+        updateChatHistoryList();
+    }
+
+    function deleteChat(chatId) {
+        store.chats = store.chats.filter(c => c.id !== chatId);
+        
+        if (currentChatId === chatId) {
+            if (store.chats.length > 0) {
+                loadChat(store.chats[0].id);
+            } else {
+                createNewChat();
+            }
+        }
+        
+        saveChats();
+        updateChatHistoryList();
+    }
+
+    // Message Handling
+        async function sendMessage(message) {
+        if (!currentChatId) {
+            createNewChat();
+        }
+
+        const chat = store.chats.find(c => c.id === currentChatId);
+        if (!chat) {
+            createNewChat();
+            return;
+        }
+
+        // Ensure messages array exists
+        if (!chat.messages) chat.messages = [];
+
+        // Add user message and immediately display
+        const userMessage = { content: message, role: 'user' };
+        chat.messages.push(userMessage);
+        appendMessage(userMessage);
+
+        // Add placeholder for AI response
+        const aiResponse = { content: '', role: 'assistant' };
+        chat.messages.push(aiResponse);
+        appendMessage(aiResponse);
+
+        // Get context based on settings
+        const context = chat.messages
+            .slice(-$('#contextLength').val())
+            .map(m => ({role: m.role, content: m.content}));
+
+        // Simulate API call with streaming response
+        const response = await fakeStreamingAPI({
+            messages: context,
+            model: $('#modelSelect').val(),
+            max_length: $('#outputLength').val()
+        });
+
+
+        for await (const chunk of response) {
+            aiResponse.content += chunk;
+            updateLastMessage(aiResponse.content);
+        }
+        saveChats();
+    }
+
+    async function* fakeStreamingAPI(params) {
+    const responseText = `
+        # This is a Header
+        This is a paragraph with **bold** and *italic* text.
+        
+        - List item 1
+        - List item 2
+        
+        > A block quote
+        
+        \`\`\`javascript
+        console.log('Hello, Markdown!');
+        \`\`\`
+    `;
+    const lines = responseText.split('\n');
+    for (const line of lines) {
+        yield line + '\n'; // Preserve line breaks
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+}
+    // UI Updates
+        function appendMessage(message, skipMarkDown=false) {
+            const alignment = message.role === 'user' ? 'justify-end' : 'justify-start';
+            const bgColor = message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-100';
+
+            contentToDisplay = DOMPurify.sanitize(marked.parse(message.content));
+            if (!skipMarkDown && message.role === 'assistant') {
+                try {
+                    contentToDisplay = marked.parse(message.content);
+                } catch (e) {
+                    console.error('Markdown parsing error:', e);
+                }
+            }
+
+
+            $('#chatMessages').append(`
+                <div class="flex ${alignment}">
+                    <div class="${bgColor} max-w-[70%] rounded-lg p-3">
+                        ${contentToDisplay}
+                    </div>
+                </div>
+            `);
+            scrollToBottom();
+        }
+
+    function updateLastMessage(content) {
+        try {
+            const parsed = marked.parse(content);
+            $('#chatMessages div:last-child div').html(parsed);
+        } catch (e) {
+            console.error('Markdown parsing error:', e);
+            $('#chatMessages div:last-child div').text(content);
+        }
+        scrollToBottom();
+    }
+
+    function scrollToBottom() {
+        $('#chatMessages').scrollTop($('#chatMessages')[0].scrollHeight);
+    }
+
+    // Settings Management
+    function saveSettings() {
+        store.settings = {
+            model: $('#modelSelect').val(),
+            outputLength: $('#outputLength').val(),
+            contextLength: $('#contextLength').val()
+        };
+        localStorage.setItem('appSettings', JSON.stringify(store.settings));
+    }
+
+    // Event Handlers
+    $('#newChat').click(createNewChat);
+    $('#sendButton').click(() => {
+        const message = $('#messageInput').val();
+        if(message.trim()) {
+            $('#messageInput').val('');
+            sendMessage(message);
+        }
+    });
+
+    $('#messageInput').keypress(e => {
+        if(e.which === 13) $('#sendButton').click();
+    });
+
+    $('.settings-input').on('change', saveSettings);
+    
+    // Sidebar Toggles
+    $('#toggleLeft').click(() => {
+        $('#leftSidebar').toggleClass('-ml-64');
+        $('#mainContent').toggleClass('ml-64');
+    });
+
+    $('#toggleRight').click(() => {
+        $('#rightSidebar').toggleClass('-mr-64');
+        $('#mainContent').toggleClass('mr-64');
+    });
+    
+
+    // Initialize
+    init();
+});
+</script>
+</body>
+</html>
