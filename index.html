@@ -38,6 +38,22 @@
             padding: 2px 4px;
             border-radius: 4px;
         }
+        body.dark-mode {
+        background-color: #1a202c; /* Dark background */
+        color: #cbd5e0; /* Light text color */
+        }
+
+        body.dark-mode .bg-white {
+            background-color: #2d3748; /* Darker elements */
+        }
+
+        body.dark-mode .bg-gray-100 {
+            background-color: #4a5568; /* Darker chat area */
+        }
+
+        body.dark-mode .bg-blue-500 {
+            background-color: #2b6cb0; /* Adjust blue for dark mode */
+        }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -104,6 +120,11 @@
                     <input type="number" id="contextLength"
                            class="settings-input w-full p-2 border rounded" value="5"/>
                 </div>
+                <!-- Dark Mode Toggle -->
+                <div>
+                    <label class="block text-sm font-medium mb-1">Dark Mode</label>
+                    <input type="checkbox" id="darkModeToggle" class="settings-input" />
+                </div>
             </div>
         </div>
     </div>
@@ -119,6 +140,30 @@
             chats: JSON.parse(localStorage.getItem('chatSessions') || '[]'),
             settings: JSON.parse(localStorage.getItem('appSettings') || '{}')
         };
+        // Load Dark Mode Setting
+        function loadDarkModeSetting() {
+            const isDarkMode = JSON.parse(localStorage.getItem('darkMode')) || false;
+            $('#darkModeToggle').prop('checked', isDarkMode);
+            if (isDarkMode) {
+                $('body').addClass('dark-mode');
+            }
+        }
+
+        // Save Dark Mode Setting
+        function saveDarkModeSetting() {
+            const isDarkMode = $('#darkModeToggle').is(':checked');
+            localStorage.setItem('darkMode', JSON.stringify(isDarkMode));
+        }
+
+        // Toggle Dark Mode
+        $('#darkModeToggle').change(function() {
+            if ($(this).is(':checked')) {
+                $('body').addClass('dark-mode');
+            } else {
+                $('body').removeClass('dark-mode');
+            }
+            saveDarkModeSetting();
+        });
 
         // Ensure chats array exists
         if (!Array.isArray(store.chats)) store.chats = [];
@@ -204,6 +249,7 @@
             }
 
             loadChatHistory();
+            loadDarkModeSetting(); 
         }
 
         // Chat Management
